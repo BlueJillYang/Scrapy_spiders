@@ -1,10 +1,11 @@
 #!/usr/bin/python
-#-*- coding: utf-8 -*-import sys
+# -*- coding: utf-8 -*-
 import re
 import time
 import sys
 import scrapy
 import json
+import datetime
 import redis
 import random
 import urllib
@@ -30,19 +31,18 @@ sys.setdefaultencoding('utf-8')
 class Zgbh(scrapy.Spider):
     name = "zgbh"
     start_urls = [
-        'http://www.binhai.gov.cn/Article/ShowClass.asp?ClassID=202&page=1 PN',
-        'http://www.binhai.gov.cn/Article/ShowClass.asp?ClassID=201&page=1 RN',
-        'http://www.binhai.gov.cn/Article/ShowClass.asp?ClassID=200&page=1 PN',
+        'http://binhai.yancheng.gov.cn/col/col17618/index.html PN',  # 招投标信息 杂乱的 需要判断title分类
     ]
     Debug = True
     doredis = True
     # configure = SpecialConfig()
     post_params = []
-    custom_settings = {"ROBOTSTXT_OBEY":False,
-                       "DOWNLOAD_DELAY":0.1,
-                       "DOWNLOAD_TIMEOUT":15}
+    custom_settings = {"ROBOTSTXT_OBEY": False,
+                       "DOWNLOAD_DELAY": 0.1,
+                       "DOWNLOAD_TIMEOUT": 15}
+    final = []
 
-    def __init__(self, start_url = None,history=False):
+    def __init__(self,start_url=None,history=True):
         super(Zgbh, self).__init__()
         # jobs = start_url.split('|')
         jobs = self.start_urls
@@ -59,38 +59,73 @@ class Zgbh(scrapy.Spider):
             yield Request(url=url,method='get',meta={"ba_type":channel["ba_type"],"page_parse":True},callback=self.parse_link)
 
     def parse_link(self, response):
-        data_list = response.xpath('//td[@class="cl3"]/table[2]/tr[not(@style)]').extract()
-        print len(data_list)
-        # print data_listmeta
-        for each in data_list[1:]:
-            sel1 = Selector(text=each)
-            url = sel1.xpath('//td[@class="news1424"]/a/@href').extract()[0]
-            pubtime = sel1.xpath('//td[last()]/text()').re('\d+/\d+/\d+')[0].replace('/','-')
-            url = urljoin(response.url,url)
+        data_list = re.findall(r'<a\s*?href="(/art.+?html)"\s*?target="_blank"\s*?title=".+?">(.+?)</a>\s*?\[(20\d{2}-\d{2}-\d{2}).\s*?</li>', response.body)
+        for each in data_list:
+            url = each[0].strip()
+            title = each[1]
+            pubtime = each[2].replace(' ', '').strip() + ' 00:00'
+            url = urlparse.urljoin(response.url, url)
+            self.final.append(url)
             # if self.doredis and self.expire_redis.exists(url):
             #     continue
-            pubtime = pubtime + " 00:00"
-            print url,  '  pubtime: ', pubtime
-            yield Request(url=url,method='get',meta={"ba_type":response.meta["ba_type"],"pubtime":pubtime},callback=self.parse_item)
+            # print url, '  len(set(final)): ', len(set(self.final)), '  ', pubtime, title
+            yield Request(url=url,method='get',meta={"ba_type":response.meta["ba_type"], 'title': title, 'pubtime': pubtime},callback=self.parse_item)
         if self.history and response.meta["page_parse"]:
-            if response.xpath('//div[@class="show_page"]/b/text()').re('\d+'):
-                count = int(response.xpath('//div[@class="show_page"]/b/text()').re('\d+')[0])
-                page = count/20 if count/20 == 0 else count/20 + 1
-                for i in range(2,int(page)+1):
-                    page_url = response.url.replace('page=1','page='+str(i))
-                    yield FormRequest(url=page_url,meta={"ba_type":response.meta["ba_type"],"page_parse":False},callback=self.parse_link)
+            columnid = re.search(r'col(\d+)/', response.url).group(1)
+            total_count = re.search(r'dataAfter.+totalRecord:(\d+)', response.body)
+            if total_count:
+                total_count = total_count.group(1)
+                if int(total_count) % 45 == 0:
+                    total_page = int(total_count)//45
+                else:
+                    total_page = int(total_count)//45 + 1
+                for i in range(1, int(total_page)):
+                    post_url = 'http://binhai.yancheng.gov.cn/module/web/jpage/dataproxy.jsp?'
+                    start_i = 1 + 45*i
+                    end_i = 45 + 45*i
+                    getData = {'startrecord': str(start_i), 'endrecord': str(end_i), 'perpage': '15'}
+                    final_url = post_url + urllib.urlencode(getData)
+                    formData = {
+                        'col': '1', 'appid': '1', 'webid': '51', 'path': '/', 'columnid': str(columnid), 'sourceContentType': '1',
+                        'unitid': '30645', 'webname': '滨海县人民政府', 'permissiontype': '0'
+                    }
+                    yield FormRequest(url=final_url,formdata=formData,meta={"ba_type":response.meta["ba_type"],"page_parse":False},callback=self.parse_link)
 
     def parse_item(self, response):
         item = DataItem()
-        item["pubtime"] = response.meta["pubtime"]
+        pubtime = response.xpath('//p[@class="con-title"]/../div[1]/div/span[1]/text()').extract()
+        if len(pubtime) > 0:
+            item['pubtime'] = re.search(r'\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}', pubtime[0]).group()
+        else:
+            item["pubtime"] = response.meta["pubtime"]
+        item['pubtime'] = datetime.datetime.strptime(item['pubtime'], "%Y-%m-%d %H:%M").strftime("%Y-%m-%d %H:%M")
         item["type"] = response.meta["ba_type"]
-        item['area'] = u'江苏省盐城市'
-        item['source'] = u'中国滨海'
+        item['area'] = u'江苏省盐城市滨海县'
+        item['source'] = u'滨海县人民政府'
         item['collecttime'] = time.strftime('%Y-%m-%d %H:%M')
         item['url'] = response.url
-        item['title'] = response.xpath('//td[@style="HEIGHT: 60px; TEXT-ALIGN: center"]/span/strong/text()').extract()[0]
-        item['content'] = ''.join(response.xpath('/html/body/table[3]/tr/td[1]/table[1]/tr/td/table/tr[2]/td/table').extract())
-        # print item
+        title = response.xpath('//p[@class="con-title"]/text()').extract()
+        if len(title) > 0:
+            item['title'] = title[0].strip()
+        else:
+            item['title'] = response.meta['title'].strip()
+        if u'成交' in item['title'] or u'结果' in item['title'] or u'中标' in item['title'] or \
+                u'未入围' in item['title'] or u'失败' in item['title'] or u'合同公' in item['title'] or \
+                u'结果有关事宜公告' in item['title'] or u'中止' in item['title'] or \
+                u'终止' in item['title']:
+            item['type'] = 'RN'
+        elif u'变更' in item['title'] or u'澄清' in item['title'] or u'答疑' in item['title'] or \
+                u'更正' in item['title'] or u'更改' in item['title'] or  u'补充' in item['title']:
+            item['type'] = 'CN'
+        elif u'预告' in item['title']:
+            item['type'] = 'PF'
+        content = response.xpath('//div[@class="main-txt"]').extract() or \
+                  response.xpath('//div[@class="Section0"]').extract() or \
+                  response.xpath("//div[@class='cas_content']").extract() or \
+                  response.xpath("//div[@class='TRS_Editor']").extract() or \
+                  response.xpath("//td[@style='line-height:28px; font-size:14px; color:#444']").extract()
+        item['content'] = content[0]
+        print item['title'], item['type'], item['pubtime'], item['url']
         if item['pubtime'] and item['title'] and item['content']:
             yield item
 

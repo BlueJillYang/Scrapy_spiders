@@ -51,7 +51,7 @@ class jshaqxzfcgw(scrapy.Spider):
     # configure = SpecialConfig()
     post_params = []
 
-    def __init__(self, start_url=None, history=True):
+    def __init__(self,start_url=None,history=True):
         super(jshaqxzfcgw, self).__init__()
         self.histroy = history
         jobs = self.start_urls

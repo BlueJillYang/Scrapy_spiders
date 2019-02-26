@@ -47,3 +47,15 @@ class DataItem(scrapy.Item):
     author=scrapy.Field()
     file_urls = scrapy.Field()
     passed = scrapy.Field()
+
+
+class JobItem(scrapy.Item):
+    job_name = scrapy.Field()
+    url = scrapy.Field()
+    salary = scrapy.Field()
+    location = scrapy.Field()
+    desc = scrapy.Field()
+    pubtime = scrapy.Field()
+    education = scrapy.Field()
+
+

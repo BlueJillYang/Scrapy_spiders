@@ -15,6 +15,7 @@ from scrapy.xlib.pydispatch import dispatcher
 import xlrd
 import csv
 import codecs
+import MySQLdb
 
 
 class GuangmingPipeline(object):
@@ -28,10 +29,11 @@ class GuangmingPipeline(object):
         dispatcher.connect(self.initialize, signals.spider_opened)
 
     def initialize(self, spider):
-        #创建json
-        self.FileName= os.path.join(self.folder, spider.name+".json")
-        # self.FileName= os.path.join(self.folder, spider.name+"_%d.json"%int(time.time()))
-        self.jsonFile= codecs.open(self.FileName,'w',encoding='utf-8')
+        # 创建json
+        self.spiderName = spider.name
+        self.FileName = os.path.join(self.folder, spider.name+".json")
+        ## self.FileName= os.path.join(self.folder, spider.name+"_%d.json"%int(time.time()))
+        self.jsonFile = codecs.open(self.FileName,'w',encoding='utf-8')
 
     def __del__(self):
         # self.file.close() self.csvFile
